@@ -3,7 +3,7 @@
 **Autor:** Dimitri Reimchen  
 **Copyright:** © 2026 Dimitri Reimchen  
 **Lizenz:** GNU General Public License v2 oder neuer  
-**Version:** 1.2.0  
+**Version:** 1.3.0  
 **QGIS Mindestversion:** 3.0  
 
 ---
@@ -36,7 +36,7 @@ QGIS speichert bei aktivierter "Speichern"-Checkbox das Passwort im **Klartext**
 
 ### Methode 1 – Aus ZIP installieren (empfohlen)
 
-1. ZIP-Datei [`disable_basic_auth_store_v1.2.0.zip`](./disable_basic_auth_store_v1.2.0.zip) herunterladen
+1. ZIP-Datei [`disable_basic_auth_store_v1.3.0.zip`](./disable_basic_auth_store_v1.3.0.zip) herunterladen
 2. SHA256-Prüfsumme verifizieren (siehe unten)
 3. QGIS öffnen
 4. Menü **Erweiterungen** → **Erweiterungen verwalten und installieren**
@@ -75,6 +75,7 @@ Get-FileHash disable_basic_auth_store_v1.2.0.zip -Algorithm SHA256
 
 | Version | SHA256 |
 |---|---|
+| 1.3.0 | `43f9e50674a6f4fcac13143d495b1fdd05a530203904583b2750df248eeeac21` |
 | 1.2.0 | `9896c59abad2aa4a38f30c52ce0e3eaf987016ac7ca9395d218f0d6cacded91f` |
 
 ---
@@ -88,6 +89,11 @@ Bei jeder Deaktivierung wird ein **Audit-Eintrag** im QGIS Message Log geschrieb
 ---
 
 ## Changelog
+
+### v1.3.0 (2026-04-23)
+- Memory Leak behoben: `_patched`-Set wird via `checkbox.destroyed`-Signal aufgeräumt
+- `metadata.txt`: tracker, repository, homepage zeigen jetzt auf eigenes Repo
+- ZIP und SHA256 aktualisiert
 
 ### v1.2.0 (2026-04-23)
 - Signal-basierter Ansatz statt Polling-Timer (Race Condition behoben)
@@ -109,4 +115,4 @@ Bei jeder Deaktivierung wird ein **Audit-Eintrag** im QGIS Message Log geschrieb
 
 | Version | Datei | SHA256 |
 |---|---|---|
-| **1.2.0** | [disable_basic_auth_store_v1.2.0.zip](./disable_basic_auth_store_v1.2.0.zip) | `9896c59abad2aa4a38f30c52ce0e3eaf987016ac7ca9395d218f0d6cacded91f` |
+| **1.3.0** | [disable_basic_auth_store_v1.3.0.zip](./disable_basic_auth_store_v1.3.0.zip) | `43f9e50674a6f4fcac13143d495b1fdd05a530203904583b2750df248eeeac21` |

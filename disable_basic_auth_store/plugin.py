@@ -5,17 +5,21 @@ Disable Basic Auth Store - QGIS Plugin
 Autor:     Dimitri Reimchen
 Copyright: (C) 2026 Dimitri Reimchen
 Lizenz:    GNU General Public License v2 oder neuer
-Version:   1.2.0
+Version:   1.3.0
 
 Dieses Plugin deaktiviert alle "Speichern"-Checkboxen in QGIS-Verbindungs-
 dialogen (PostgreSQL, WMS, WFS, SAP HANA etc.), um das versehentliche
 Speichern von Zugangsdaten im Klartext zu verhindern.
 
-Verbesserungen in v1.2.0 (basierend auf Security-Review):
-- Signal-basierter Ansatz statt Polling-Timer (behebt Race Condition)
-- Ausschliesslich ObjectName-Matching (keine fragile Texterkennung mehr)
-- Verbessertes Audit-Logging im QGIS Message Log
-- Hinweis auf Grenzen des Plugins (UI-only Control)
+Verbesserungen in v1.3.0 (basierend auf Security-Review):
+- Memory Leak behoben: _patched-Set wird via checkbox.destroyed-Signal
+  aufgeraeumt, damit veraltete id()-Eintraege entfernt werden
+- metadata.txt: tracker/repository/homepage zeigen auf eigenes Repo
+
+Verbesserungen in v1.2.0:
+- Signal-basierter Ansatz statt Polling-Timer (Race Condition behoben)
+- Ausschliesslich ObjectName-Matching (keine fragile Texterkennung)
+- Audit-Logging im QGIS Message Log
 """
 
 from qgis.PyQt.QtCore import QObject
@@ -48,12 +52,14 @@ class DisableBasicAuthStorePlugin(QObject):
     Haupt-Plugin-Klasse.
 
     Verwendet einen Signal-basierten Ansatz ueber QApplication.focusChanged,
-    um Dialoge sofort beim Oeffnen zu patchen - ohne Race Condition durch Polling.
+    um Dialoge sofort beim Oeffnen zu patchen - ohne Race Condition.
 
-    Hinweis: Dieses Plugin ist ein UI-only Control. Es verhindert versehentliches
-    Speichern, ist aber kein Ersatz fuer Policy-basierte Haertung (GPO/Registry).
-    Fuer echtes Enterprise-Hardening sollte es mit QGIS-Profil-Locking kombiniert
-    werden.
+    Memory-Management: Wenn ein Qt-Widget zerstoert wird, wird seine id()
+    via checkbox.destroyed-Signal aus _patched entfernt, um Memory Leaks
+    bei langen QGIS-Sessions zu verhindern.
+
+    Hinweis: UI-only Control - kein Ersatz fuer Policy-basierte Haertung
+    (GPO/Registry/qgis_global_settings.ini).
     """
 
     def __init__(self, iface):
@@ -63,14 +69,11 @@ class DisableBasicAuthStorePlugin(QObject):
 
     def initGui(self):
         """Wird von QGIS beim Laden des Plugins aufgerufen."""
-        # Signal-basierter Ansatz: bei jedem Fokuswechsel pruefen
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
-
-        # Einmalig alle bereits offenen Widgets patchen (z.B. beim Reload)
         self._patch_all_open_widgets()
 
         QgsMessageLog.logMessage(
-            "Plugin geladen (v1.2.0) - (C) 2026 Dimitri Reimchen. "
+            "Plugin geladen (v1.3.0) - (C) 2026 Dimitri Reimchen. "
             "Signal-basiertes Monitoring aktiv. "
             "HINWEIS: UI-only Control - kein Ersatz fuer Policy-Haertung.",
             PLUGIN_NAME,
@@ -91,11 +94,7 @@ class DisableBasicAuthStorePlugin(QObject):
         )
 
     def _on_focus_changed(self, old_widget, new_widget):
-        """
-        Wird bei jedem Fokuswechsel aufgerufen.
-        Durchsucht das neue Widget und seinen Top-Level-Parent nach
-        Speichern-Checkboxen.
-        """
+        """Bei jedem Fokuswechsel das neue Top-Level-Widget patchen."""
         if new_widget is None:
             return
         top = new_widget.window()
@@ -119,11 +118,14 @@ class DisableBasicAuthStorePlugin(QObject):
 
     def _disable_checkbox(self, checkbox):
         """
-        Deaktiviert eine Checkbox und setzt Tooltip und Checked-State.
+        Deaktiviert eine Checkbox, setzt Tooltip und Checked-State.
+        Verbindet checkbox.destroyed mit _on_checkbox_destroyed, um
+        den _patched-Eintrag bei Widget-Zerstoerung aufzuraeumen (Memory Leak Fix).
         Schreibt einen Audit-Eintrag ins QGIS Message Log.
         """
         widget_id = id(checkbox)
 
+        # Bereits gepatcht und noch deaktiviert? Nichts tun.
         if widget_id in self._patched and not checkbox.isEnabled():
             return
 
@@ -132,6 +134,9 @@ class DisableBasicAuthStorePlugin(QObject):
             checkbox.setChecked(False)
             checkbox.setToolTip(TOOLTIP_TEXT)
             self._patched.add(widget_id)
+
+            # Memory Leak Fix: bei Widget-Zerstoerung id() aus _patched entfernen
+            checkbox.destroyed.connect(lambda: self._patched.discard(widget_id))
 
             parent_name = checkbox.parent().__class__.__name__ if checkbox.parent() else "unknown"
             QgsMessageLog.logMessage(
