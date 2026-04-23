@@ -2,7 +2,7 @@
 name=Disable Basic Auth Store
 qgisMinimumVersion=3.0
 description=Deaktiviert alle "Speichern"-Checkboxen in QGIS-Verbindungsdialogen (PostgreSQL, WMS, WFS, SAP HANA etc.), um das versehentliche Speichern von Passwörtern im Klartext zu verhindern.
-version=1.1.0
+version=1.2.0
 author=Dimitri Reimchen
 email=dimitri@reimchen.com
 about=Dieses Plugin deaktiviert aus Sicherheitsgründen die beiden Checkboxen "Store" (Speichern) im Basic-Auth-Tab des QGIS-Authentifizierungswidgets. Dadurch wird verhindert, dass Benutzername und Passwort im Klartext in der QGIS-Projektdatei oder den Benutzereinstellungen gespeichert werden. Nutzer werden stattdessen auf die sichere QGIS-Authentifizierungsdatenbank verwiesen.

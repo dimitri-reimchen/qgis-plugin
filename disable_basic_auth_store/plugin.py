@@ -5,25 +5,27 @@ Disable Basic Auth Store - QGIS Plugin
 Autor:     Dimitri Reimchen
 Copyright: (C) 2026 Dimitri Reimchen
 Lizenz:    GNU General Public License v2 oder neuer
-Version:   1.1.0
+Version:   1.2.0
 
-Dieses Plugin deaktiviert alle "Speichern"-Checkboxen (cbStoreUsername,
-cbStorePassword) in ALLEN QGIS-Dialogen, die Zugangsdaten im Klartext
-speichern könnten – inklusive PostgreSQL, WMS, WFS, SAP HANA etc.
+Dieses Plugin deaktiviert alle "Speichern"-Checkboxen in QGIS-Verbindungs-
+dialogen (PostgreSQL, WMS, WFS, SAP HANA etc.), um das versehentliche
+Speichern von Zugangsdaten im Klartext zu verhindern.
 
-Strategie: Ein QTimer durchsucht alle 300ms alle sichtbaren Top-Level-Widgets
-rekursiv nach QCheckBoxen mit den bekannten Objektnamen UND nach
-QCheckBoxen, deren Text "Speichern" oder "Store" enthält.
+Verbesserungen in v1.2.0 (basierend auf Security-Review):
+- Signal-basierter Ansatz statt Polling-Timer (behebt Race Condition)
+- Ausschliesslich ObjectName-Matching (keine fragile Texterkennung mehr)
+- Verbessertes Audit-Logging im QGIS Message Log
+- Hinweis auf Grenzen des Plugins (UI-only Control)
 """
 
-from qgis.PyQt.QtCore import QTimer
+from qgis.PyQt.QtCore import QObject
 from qgis.PyQt.QtWidgets import QApplication, QCheckBox
 from qgis.core import QgsMessageLog, Qgis
 
 
 PLUGIN_NAME = "Disable Basic Auth Store"
 
-# Bekannte Objektnamen der Speichern-Checkboxen in QGIS-Dialogen
+# Ausschliesslich stabile ObjectNames - keine Texterkennung (locale-unabhaengig)
 STORE_CHECKBOX_NAMES = {
     "cbStoreUsername",
     "cbStorePassword",
@@ -33,50 +35,54 @@ STORE_CHECKBOX_NAMES = {
     "chkStorePassword",
 }
 
-# Bekannte Label-Texte (Deutsch + Englisch) der Speichern-Checkboxen
-STORE_CHECKBOX_TEXTS = {
-    "speichern",
-    "store",
-    "save",
-    "passwort speichern",
-    "benutzername speichern",
-    "save password",
-    "save username",
-    "store password",
-    "store username",
-}
-
 TOOLTIP_TEXT = (
-    "Aus Sicherheitsgründen deaktiviert.\n"
+    "Aus Sicherheitsgruenden deaktiviert.\n"
     "Bitte verwenden Sie den Tab 'Konfigurationen',\n"
-    "um Zugangsdaten verschlüsselt zu speichern.\n\n"
-    "© 2026 Dimitri Reimchen"
+    "um Zugangsdaten verschluesselt zu speichern.\n\n"
+    "(C) 2026 Dimitri Reimchen"
 )
 
 
-class DisableBasicAuthStorePlugin:
-    """Haupt-Plugin-Klasse."""
+class DisableBasicAuthStorePlugin(QObject):
+    """
+    Haupt-Plugin-Klasse.
+
+    Verwendet einen Signal-basierten Ansatz ueber QApplication.focusChanged,
+    um Dialoge sofort beim Oeffnen zu patchen - ohne Race Condition durch Polling.
+
+    Hinweis: Dieses Plugin ist ein UI-only Control. Es verhindert versehentliches
+    Speichern, ist aber kein Ersatz fuer Policy-basierte Haertung (GPO/Registry).
+    Fuer echtes Enterprise-Hardening sollte es mit QGIS-Profil-Locking kombiniert
+    werden.
+    """
 
     def __init__(self, iface):
+        super().__init__()
         self.iface = iface
-        self._timer = QTimer()
-        self._timer.setInterval(300)  # alle 300ms prüfen
-        self._timer.timeout.connect(self._patch_all_open_widgets)
-        self._patched = set()  # bereits gepatchte Widgets (id) merken
+        self._patched = set()
 
     def initGui(self):
         """Wird von QGIS beim Laden des Plugins aufgerufen."""
-        self._timer.start()
+        # Signal-basierter Ansatz: bei jedem Fokuswechsel pruefen
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
+
+        # Einmalig alle bereits offenen Widgets patchen (z.B. beim Reload)
+        self._patch_all_open_widgets()
+
         QgsMessageLog.logMessage(
-            "Plugin geladen (v1.1.0) – © 2026 Dimitri Reimchen: "
-            "Alle Basic-Auth Store-Checkboxen werden deaktiviert.",
+            "Plugin geladen (v1.2.0) - (C) 2026 Dimitri Reimchen. "
+            "Signal-basiertes Monitoring aktiv. "
+            "HINWEIS: UI-only Control - kein Ersatz fuer Policy-Haertung.",
             PLUGIN_NAME,
             Qgis.Info
         )
 
     def unload(self):
         """Wird von QGIS beim Entladen des Plugins aufgerufen."""
-        self._timer.stop()
+        try:
+            QApplication.instance().focusChanged.disconnect(self._on_focus_changed)
+        except RuntimeError:
+            pass
         self._patched.clear()
         QgsMessageLog.logMessage(
             "Plugin entladen.",
@@ -84,55 +90,55 @@ class DisableBasicAuthStorePlugin:
             Qgis.Info
         )
 
-    def _patch_all_open_widgets(self):
+    def _on_focus_changed(self, old_widget, new_widget):
         """
-        Durchsucht alle aktuell sichtbaren Top-Level-Widgets nach
-        Speichern-Checkboxen und deaktiviert sie.
+        Wird bei jedem Fokuswechsel aufgerufen.
+        Durchsucht das neue Widget und seinen Top-Level-Parent nach
+        Speichern-Checkboxen.
         """
-        for top_widget in QApplication.topLevelWidgets():
-            for checkbox in top_widget.findChildren(QCheckBox):
-                self._maybe_disable_checkbox(checkbox)
+        if new_widget is None:
+            return
+        top = new_widget.window()
+        if top:
+            self._patch_widget(top)
 
-    def _maybe_disable_checkbox(self, checkbox):
+    def _patch_all_open_widgets(self):
+        """Patcht alle aktuell geoeffneten Top-Level-Widgets (einmalig beim Start)."""
+        for top_widget in QApplication.topLevelWidgets():
+            self._patch_widget(top_widget)
+
+    def _patch_widget(self, widget):
         """
-        Prüft ob eine Checkbox eine "Speichern"-Checkbox ist und
-        deaktiviert sie gegebenenfalls.
+        Durchsucht ein Widget nach allen bekannten Speichern-Checkboxen
+        anhand ihrer stabilen ObjectNames und deaktiviert sie.
+        """
+        for name in STORE_CHECKBOX_NAMES:
+            checkbox = widget.findChild(QCheckBox, name)
+            if checkbox:
+                self._disable_checkbox(checkbox)
+
+    def _disable_checkbox(self, checkbox):
+        """
+        Deaktiviert eine Checkbox und setzt Tooltip und Checked-State.
+        Schreibt einen Audit-Eintrag ins QGIS Message Log.
         """
         widget_id = id(checkbox)
 
-        # Bereits gepatcht und immer noch deaktiviert? Überspringen.
         if widget_id in self._patched and not checkbox.isEnabled():
             return
 
-        should_disable = False
-
-        # Prüfung 1: Bekannter Objektname
-        if checkbox.objectName() in STORE_CHECKBOX_NAMES:
-            should_disable = True
-
-        # Prüfung 2: Text der Checkbox enthält "Speichern" / "Store" / "Save"
-        if not should_disable:
-            checkbox_text = checkbox.text().lower().strip()
-            if checkbox_text in STORE_CHECKBOX_TEXTS:
-                parent = checkbox.parent()
-                if parent:
-                    parent_class = parent.__class__.__name__
-                    # Nur in Auth-relevanten Widgets deaktivieren
-                    if any(keyword in parent_class.lower() for keyword in
-                           ["auth", "connection", "connect", "login", "credential"]):
-                        should_disable = True
-                    # Auch direkt im QgsAuthSettingsWidget
-                    if parent_class == "QgsAuthSettingsWidget":
-                        should_disable = True
-
-        if should_disable and checkbox.isEnabled():
+        if checkbox.isEnabled():
             checkbox.setEnabled(False)
             checkbox.setChecked(False)
             checkbox.setToolTip(TOOLTIP_TEXT)
             self._patched.add(widget_id)
+
+            parent_name = checkbox.parent().__class__.__name__ if checkbox.parent() else "unknown"
             QgsMessageLog.logMessage(
-                f"Checkbox deaktiviert: '{checkbox.objectName()}' "
-                f"(Text: '{checkbox.text()}') in {checkbox.parent().__class__.__name__}",
+                "[AUDIT] Checkbox deaktiviert: objectName='{}' "
+                "in Widget '{}'. "
+                "Klartext-Speicherung wurde verhindert.".format(
+                    checkbox.objectName(), parent_name),
                 PLUGIN_NAME,
-                Qgis.Info
+                Qgis.Warning
             )
